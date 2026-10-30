@@ -1,227 +1,369 @@
 
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useRef, useState } from "react";
 import {
   Link2,
-  ArrowUpRight,
-  X,
-  AlertCircle,
+  Upload,
+  FileVideo,
+  Music,
+  Video,
+  Download,
   LoaderCircle,
+  X,
   CheckCircle2,
-  Play,
+  AlertCircle,
 } from "lucide-react";
 
-function isValidVideoUrl(value) {
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-
-    const allowedHosts = [
-      "youtube.com",
-      "www.youtube.com",
-      "m.youtube.com",
-      "youtu.be",
-      "www.youtu.be",
-    ];
-
-    if (!allowedHosts.includes(host)) return false;
-
-    if (host.includes("youtu.be")) {
-      return url.pathname.length > 1;
-    }
-
-    return (
-      (url.pathname === "/watch" && url.searchParams.has("v")) ||
-      /^\/(shorts|embed|live)\/[^/]+/.test(url.pathname)
-    );
-  } catch {
-    return false;
-  }
-}
+const API_URL = "http://127.0.0.1:8000";
 
 export default function VideoForm() {
   const [url, setUrl] = useState("");
-  const [status, setStatus] = useState("idle");
-  const [videoData, setVideoData] = useState(null);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [videoInfo, setVideoInfo] = useState(null);
+  const [file, setFile] = useState(null);
+  const [format, setFormat] = useState("mp4");
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  const [loadingInfo, setLoadingInfo] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-    const cleanUrl = url.trim();
+  const fileInputRef = useRef(null);
 
-    if (!isValidVideoUrl(cleanUrl)) {
-      setStatus("error");
-      setErrorMessage("Veuillez saisir un lien YouTube valide.");
-      setVideoData(null);
+  const handleVideoInfo = async (e) => {
+    e.preventDefault();
+
+    setError("");
+    setSuccess("");
+    setVideoInfo(null);
+
+    if (!url.trim()) {
+      setError("Veuillez coller un lien YouTube.");
       return;
     }
 
     try {
-      setStatus("loading");
-      setVideoData(null);
-      setErrorMessage("");
-
-      const params = new URLSearchParams({ url: cleanUrl });
+      setLoadingInfo(true);
 
       const response = await fetch(
-        `http://127.0.0.1:8000/api/video-info?${params.toString()}`
+        `${API_URL}/api/video-info?url=${encodeURIComponent(url)}`
       );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Impossible de récupérer cette vidéo.");
+        throw new Error(data.detail || "Impossible de récupérer la vidéo.");
       }
 
-      setVideoData(data);
-      setStatus("success");
-    } catch (error) {
-      console.error("Erreur API :", error);
-      setErrorMessage(
-        error.message || "Impossible de contacter le serveur."
-      );
-      setStatus("server-error");
+      setVideoInfo(data);
+    } catch (err) {
+      setError(err.message || "Une erreur est survenue.");
+    } finally {
+      setLoadingInfo(false);
     }
   };
 
-  const handleChange = (event) => {
-    setUrl(event.target.value);
-    setStatus("idle");
-    setVideoData(null);
-    setErrorMessage("");
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files?.[0];
+
+    setError("");
+    setSuccess("");
+
+    if (!selectedFile) return;
+
+    const allowedExtensions = [
+      ".mp4",
+      ".mov",
+      ".mkv",
+      ".avi",
+      ".webm",
+      ".m4v",
+    ];
+
+    const extension = selectedFile.name
+      .substring(selectedFile.name.lastIndexOf("."))
+      .toLowerCase();
+
+    if (!allowedExtensions.includes(extension)) {
+      setError("Ce format vidéo n'est pas accepté.");
+      return;
+    }
+
+    if (selectedFile.size > 500 * 1024 * 1024) {
+      setError("Le fichier ne doit pas dépasser 500 Mo.");
+      return;
+    }
+
+    setFile(selectedFile);
   };
 
-  const clearUrl = () => {
-    setUrl("");
-    setStatus("idle");
-    setVideoData(null);
-    setErrorMessage("");
+  const handleConversion = async () => {
+    if (!file) {
+      setError("Veuillez d'abord sélectionner une vidéo.");
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setConverting(true);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("output_format", format);
+
+    try {
+      const response = await fetch(`${API_URL}/api/convert`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || "La conversion a échoué.");
+      }
+
+      const blob = await response.blob();
+
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      const originalName = file.name.replace(/\.[^/.]+$/, "");
+
+      link.href = downloadUrl;
+      link.download = `${originalName}.${format}`;
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      window.URL.revokeObjectURL(downloadUrl);
+
+      setSuccess(
+        `Conversion terminée ! Ton fichier ${format.toUpperCase()} a été téléchargé.`
+      );
+    } catch (err) {
+      setError(err.message || "Une erreur est survenue pendant la conversion.");
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const removeFile = () => {
+    setFile(null);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const formatSize = (bytes) => {
+    return bytes >= 1024 * 1024
+      ? `${(bytes / (1024 * 1024)).toFixed(2)} Mo`
+      : `${(bytes / 1024).toFixed(0)} Ko`;
   };
 
   return (
-    <motion.section
-      className="video-form-container"
-      initial={{ opacity: 0, y: 25 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.7, delay: 0.2 }}
-    >
-      <form onSubmit={handleSubmit}>
-        <div
-          className={`glass-url-bar ${
-            status === "error" ? "field-error" : ""
-          }`}
-        >
-          <div className="glass-url-icon">
-            <Link2 size={21} strokeWidth={1.8} />
-          </div>
+    <section className="video-form-section">
+
+      {/* RECONNAISSANCE YOUTUBE */}
+
+      <form className="video-form" onSubmit={handleVideoInfo}>
+        <div className="video-input-wrapper">
+          <Link2 size={20} />
 
           <input
             type="url"
-            placeholder="Collez votre lien vidéo ici..."
             value={url}
-            onChange={handleChange}
-            aria-label="Lien de la vidéo"
-            disabled={status === "loading"}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="Collez votre lien YouTube ici..."
           />
 
-          {url && status !== "loading" && (
-            <button
-              type="button"
-              className="clear-button"
-              onClick={clearUrl}
-              aria-label="Effacer le lien"
-            >
-              <X size={17} />
-            </button>
-          )}
-
-          <button
-            type="submit"
-            className="glass-submit-button"
-            disabled={!url.trim() || status === "loading"}
-            aria-label="Analyser le lien"
-            title="Analyser le lien"
-          >
-            {status === "loading" ? (
-              <LoaderCircle size={20} className="animate-spin" />
+          <button type="submit" disabled={loadingInfo}>
+            {loadingInfo ? (
+              <LoaderCircle className="spin" size={18} />
             ) : (
-              <ArrowUpRight size={20} />
+              "Analyser"
             )}
           </button>
         </div>
-
-        <AnimatePresence mode="wait">
-          {(status === "error" || status === "server-error") && (
-            <motion.div
-              className="error-text"
-              initial={{ opacity: 0, y: -5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -5 }}
-            >
-              <AlertCircle size={15} />
-              {errorMessage}
-            </motion.div>
-          )}
-
-          {status === "loading" && (
-            <motion.div
-              className="loading-text"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <LoaderCircle size={15} className="animate-spin" />
-              Récupération des informations...
-            </motion.div>
-          )}
-        </AnimatePresence>
       </form>
 
-      <AnimatePresence>
-        {status === "success" && videoData && (
-          <motion.div
-            className="video-preview-card"
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            transition={{ duration: 0.4 }}
+      {videoInfo && (
+        <div className="video-preview-card">
+          <div className="video-preview-header">
+            <span className="video-preview-status">
+              <CheckCircle2 size={16} />
+              Vidéo reconnue
+            </span>
+            <span className="video-provider">{videoInfo.provider}</span>
+          </div>
+
+          <div className="video-preview-content">
+            <img
+              src={videoInfo.thumbnail}
+              alt={videoInfo.title}
+              className="video-thumbnail"
+            />
+
+            <div className="video-preview-info">
+              <h3>{videoInfo.title}</h3>
+              <p>{videoInfo.author}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SEPARATEUR */}
+
+      <div className="converter-divider">
+        <span>OU CONVERTIR UN FICHIER VIDÉO</span>
+      </div>
+
+      {/* IMPORTATION DU FICHIER */}
+
+      <div className="converter-card">
+
+        <div className="converter-heading">
+          <div className="converter-icon">
+            <FileVideo size={23} />
+          </div>
+
+          <div>
+            <h3>Convertisseur vidéo</h3>
+            <p>Transformez vos vidéos en MP4 ou en MP3.</p>
+          </div>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".mp4,.mov,.mkv,.avi,.webm,.m4v,video/*"
+          onChange={handleFileChange}
+          hidden
+        />
+
+        {!file ? (
+          <button
+            type="button"
+            className="upload-zone"
+            onClick={() => fileInputRef.current?.click()}
           >
-            <div className="video-preview-header">
-              <div className="video-preview-status">
-                <CheckCircle2 size={15} />
-                <span>Vidéo reconnue</span>
-              </div>
-              <span className="video-provider">
-                {videoData.provider}
-              </span>
+            <div className="upload-icon">
+              <Upload size={25} />
             </div>
 
-            <div className="video-preview-content">
-              <div className="video-thumbnail">
-                <img
-                  src={videoData.thumbnail}
-                  alt={`Miniature de ${videoData.title}`}
-                  onError={(event) => {
-                    event.currentTarget.style.display = "none";
-                  }}
-                />
-                <div className="thumbnail-play">
-                  <Play size={20} fill="currentColor" />
-                </div>
-              </div>
+            <strong>Importer une vidéo</strong>
 
-              <div className="video-preview-info">
-                <h2>{videoData.title}</h2>
-                <p>{videoData.author}</p>
-                <span className="video-preview-label">
-                  Aperçu de la vidéo
-                </span>
-              </div>
+            <span>
+              Cliquez pour sélectionner un fichier depuis votre ordinateur
+            </span>
+
+            <small>MP4, MOV, MKV, AVI, WEBM · Maximum 500 Mo</small>
+          </button>
+        ) : (
+          <div className="selected-file">
+            <div className="selected-file-icon">
+              <FileVideo size={23} />
             </div>
-          </motion.div>
+
+            <div className="selected-file-info">
+              <strong>{file.name}</strong>
+              <span>{formatSize(file.size)}</span>
+            </div>
+
+            <button
+              type="button"
+              className="remove-file-button"
+              onClick={removeFile}
+              disabled={converting}
+              aria-label="Retirer le fichier"
+            >
+              <X size={19} />
+            </button>
+          </div>
         )}
-      </AnimatePresence>
-    </motion.section>
+
+        {/* CHOIX DU FORMAT */}
+
+        <div className="format-selection">
+          <label>Format de sortie</label>
+
+          <div className="format-options">
+
+            <button
+              type="button"
+              className={`format-option ${format === "mp4" ? "active" : ""}`}
+              onClick={() => setFormat("mp4")}
+              disabled={converting}
+            >
+              <Video size={21} />
+              <span>
+                <strong>MP4</strong>
+                <small>Vidéo</small>
+              </span>
+              {format === "mp4" && <CheckCircle2 size={17} />}
+            </button>
+
+            <button
+              type="button"
+              className={`format-option ${format === "mp3" ? "active" : ""}`}
+              onClick={() => setFormat("mp3")}
+              disabled={converting}
+            >
+              <Music size={21} />
+              <span>
+                <strong>MP3</strong>
+                <small>Audio</small>
+              </span>
+              {format === "mp3" && <CheckCircle2 size={17} />}
+            </button>
+
+          </div>
+        </div>
+
+        {/* BOUTON DE CONVERSION */}
+
+        <button
+          type="button"
+          className="convert-button"
+          onClick={handleConversion}
+          disabled={!file || converting}
+        >
+          {converting ? (
+            <>
+              <LoaderCircle className="spin" size={19} />
+              Conversion en cours...
+            </>
+          ) : (
+            <>
+              <Download size={19} />
+              Convertir en {format.toUpperCase()}
+            </>
+          )}
+        </button>
+
+        {converting && (
+          <p className="conversion-loading">
+            FFmpeg traite votre fichier. Veuillez patienter...
+          </p>
+        )}
+
+      </div>
+
+      {/* MESSAGES */}
+
+      {error && (
+        <div className="converter-message error-message">
+          <AlertCircle size={18} />
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="converter-message success-message">
+          <CheckCircle2 size={18} />
+          {success}
+        </div>
+      )}
+
+    </section>
   );
 }
